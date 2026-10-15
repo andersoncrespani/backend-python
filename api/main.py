@@ -58,7 +58,7 @@ def login_google(dados: schemas.GoogleLogin, db: Session = Depends(get_db)):
         user = models.User(
             nome=info.get("name") or email.split("@")[0],
             email=email,
-            sexo="Outro / Prefiro não informar",  # o Google não fornece, e a coluna é obrigatória
+            sexo="Outro / Prefiro não informar",  
             provider="GOOGLE",
             provider_id=google_id,
             avatar_url=info.get("picture"),
@@ -110,7 +110,7 @@ def pedir_codigo(
         .filter(func.lower(models.User.email) == dados.email.lower())
         .first()
     )
-    # a resposta é sempre a mesma, para não revelar quais e-mails existem
+    
     if not user:
         return RESPOSTA_PEDIR
 
@@ -121,11 +121,11 @@ def pedir_codigo(
         .order_by(CV.criado_em.desc())
         .first()
     )
-    # espera 60 segundos entre pedidos
+    
     if ultimo and datetime.now(timezone.utc) - ultimo.criado_em < timedelta(seconds=60):
         return RESPOSTA_PEDIR
 
-    # invalida códigos anteriores ainda ativos
+
     db.query(CV).filter(
         CV.user_id == user.id,
         CV.finalidade == "RECUPERAR_SENHA",
