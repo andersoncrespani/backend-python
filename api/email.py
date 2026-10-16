@@ -1,7 +1,9 @@
 import smtplib
+import logging
 from email.message import EmailMessage
 from .config import EMAIL_REMETENTE, EMAIL_SENHA
 
+logger = logging.getLogger(__name__)
 
 def enviar_codigo_verificacao(destinatario: str, codigo: str) -> bool:
   msg = EmailMessage()
@@ -105,5 +107,5 @@ def enviar_codigo_verificacao(destinatario: str, codigo: str) -> bool:
       servidor.send_message(msg)
     return True
   except Exception as e:
-    print(f"Erro ao enviar e-mail: {e}")
-    return False
+     logger.error("Falha ao enviar e-mail de verificação: %s", e)
+     return False
