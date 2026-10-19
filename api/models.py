@@ -1,6 +1,6 @@
 from sqlalchemy import (
     BigInteger, Boolean, Column, Date, DateTime, ForeignKey,
-    SmallInteger, String, Text, func,
+    Integer, SmallInteger, String, Text, func,
 )
 
 from .database import Base
@@ -19,6 +19,7 @@ class User(Base):
     provider = Column(String(20), nullable=False, default="LOCAL")
     provider_id = Column(String(255))
     avatar_url = Column(Text)
+    token_version = Column(Integer, nullable=False, default=0, server_default="0")
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -35,10 +36,12 @@ class CodigoVerificacao(Base):
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
 
 
-class TentativaLogin(Base):
-    __tablename__ = "tentativas_login"
+class LimiteRequisicao(Base):
+    """Registro de tentativas, usado para limitar login, cadastro, códigos etc."""
+
+    __tablename__ = "limites_requisicao"
 
     id = Column(BigInteger, primary_key=True)
-    email = Column(String(180), nullable=False)
-    ip = Column(String(45), nullable=False)
+    acao = Column(String(30), nullable=False)    
+    chave = Column(String(200), nullable=False)  
     criado_em = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

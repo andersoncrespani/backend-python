@@ -12,6 +12,9 @@ def _obrigatoria(nome: str) -> str:
     return valor
 
 
+AMBIENTE = os.getenv("AMBIENTE", "desenvolvimento").strip().lower()
+EM_PRODUCAO = AMBIENTE in ("producao", "produção", "production", "prod")
+
 EMAIL_REMETENTE = _obrigatoria("EMAIL_REMETENTE")
 EMAIL_SENHA = _obrigatoria("EMAIL_SENHA")
 
@@ -22,6 +25,11 @@ DB_PORT = int(os.getenv("DB_PORT", "5432"))
 DB_NAME = _obrigatoria("DB_NAME")
 
 SECRET_KEY = _obrigatoria("SECRET_KEY")
+if len(SECRET_KEY) < 32:
+    raise RuntimeError(
+        "SECRET_KEY muito curta (mínimo de 32 caracteres). "
+        'Gere uma com: python -c "import secrets; print(secrets.token_urlsafe(48))"'
+    )
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 EXPIRATION_MINUTES = int(os.getenv("JWT_EXPIRATION_MINUTES", "60"))
 
