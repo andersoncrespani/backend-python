@@ -9,8 +9,8 @@ def _obrigatoria(nome: str) -> str:
         raise RuntimeError(f"Variável de ambiente ausente: {nome}")
     return valor
 
-EMAIL_REMETENTE = _obrigatoria("EMAIL_REMETENTE")
-EMAIL_SENHA = _obrigatoria("EMAIL_SENHA")
+# EMAIL_REMETENTE = _obrigatoria("EMAIL_REMETENTE")
+# EMAIL_SENHA = _obrigatoria("EMAIL_SENHA")
 
 DB_USER = _obrigatoria("DB_USER")
 DB_PASSWORD = _obrigatoria("DB_PASSWORD")
@@ -22,3 +22,6 @@ SECRET_KEY = _obrigatoria("SECRET_KEY")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 EXPIRATION_MINUTES = int(os.getenv("JWT_EXPIRATION_MINUTES", "60"))
 GOOGLE_CLIENT_ID = _obrigatoria("GOOGLE_CLIENT_ID")
+
+RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+EMAIL_REMETENTE = os.getenv("EMAIL_REMETENTE", "Enforma-Saúde <onboarding@resend.dev>")
