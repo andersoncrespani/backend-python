@@ -100,7 +100,7 @@ AMBIENTE=desenvolvimento
 
 DB_USER=postgres
 DB_PASSWORD=sua_senha
-DB_NAME=Informa-Saude-Backend
+DB_NAME=nome_do_seu_banco
 DB_HOST=localhost
 DB_PORT=5432
 
