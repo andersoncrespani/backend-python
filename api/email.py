@@ -1,18 +1,21 @@
-import logging
-import resend
-from .config import RESEND_API_KEY, EMAIL_REMETENTE
-
-logger = logging.getLogger(__name__)
-resend.api_key = RESEND_API_KEY
+import smtplib
+from email.message import EmailMessage
+from .config import EMAIL_REMETENTE, EMAIL_SENHA
 
 
 def enviar_codigo_verificacao(destinatario: str, codigo: str) -> bool:
-    texto_plano = (
-        f"Olá!\n\nSeu código de verificação na informa-Saúde é: {codigo}\n\n"
-        "Ele expira em 10 minutos. Se você não pediu este código, ignore este e-mail."
-    )
+  msg = EmailMessage()
+  msg["From"] = EMAIL_REMETENTE
+  msg["To"] = destinatario
+  msg["Subject"] = "Seu código de verificação - Enforma-Saúde"
 
-    html_conteudo = f"""
+  texto_plano = (
+      f"Olá!\n\nSeu código de verificação na Enforma-Saúde é: {codigo}\n\n"
+      "Ele expira em 10 minutos. Se você não pediu este código, ignore este e-mail."
+  )
+
+  
+  html_conteudo = f"""
     <!DOCTYPE html>
     <html lang="pt-BR">
     <head>
@@ -35,10 +38,10 @@ def enviar_codigo_verificacao(destinatario: str, codigo: str) -> bool:
             .header {{
                 background-color: #00645a;
                 text-align: center;
-                padding: 14px 20px;
+                padding: 14px 20px; 
             }}
             .header img {{
-                max-height: 65px;
+                max-height: 65px; 
                 width: auto;
                 display: block;
                 margin: 0 auto;
@@ -66,7 +69,7 @@ def enviar_codigo_verificacao(destinatario: str, codigo: str) -> bool:
                 padding: 16px;
                 font-size: 13px;
                 color: #ffffff;
-                background-color: #00645a;
+                background-color: #00645a; 
             }}
         </style>
     </head>
@@ -78,9 +81,9 @@ def enviar_codigo_verificacao(destinatario: str, codigo: str) -> bool:
             <div class="content">
                 <p>Olá,</p>
                 <p>Recebemos uma solicitação de acesso ou alteração em sua conta na <strong>informa-Saúde</strong>. Utilize o código abaixo para prosseguir:</p>
-
+                
                 <div class="code-box">{codigo}</div>
-
+                
                 <p>Este código <strong>expira em 10 minutos</strong>.</p>
                 <p>Se você não solicitou esta alteração, pode ignorar este e-mail com total segurança.</p>
             </div>
@@ -92,15 +95,15 @@ def enviar_codigo_verificacao(destinatario: str, codigo: str) -> bool:
     </html>
     """
 
-    try:
-        resend.Emails.send({
-            "from": EMAIL_REMETENTE,
-            "to": [destinatario],
-            "subject": "Seu código de verificação - informa-Saúde",
-            "html": html_conteudo,
-            "text": texto_plano,
-        })
-        return True
-    except Exception as e:
-        logger.error("Falha ao enviar e-mail de verificação: %s", e)
-        return False
+  msg.set_content(texto_plano)
+  msg.add_alternative(html_conteudo, subtype="html")
+
+  try:
+    with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as servidor:
+      servidor.starttls()
+      servidor.login(EMAIL_REMETENTE, EMAIL_SENHA)
+      servidor.send_message(msg)
+    return True
+  except Exception as e:
+    print(f"Erro ao enviar e-mail: {e}")
+    return False

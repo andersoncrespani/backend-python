@@ -1,15 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
-from slowapi import Limiter
-from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -17,32 +13,9 @@ from . import models, schemas, security
 from .config import GOOGLE_CLIENT_ID
 from .database import get_db
 from .email import enviar_codigo_verificacao
-import logging
-
-LIMITE_LOGIN = "5/minute"
-LIMITE_GOOGLE = "10/minute"
-LIMITE_CADASTRO = "10/hour"
-LIMITE_PEDIR_CODIGO = "3/minute"
-LIMITE_VERIFICAR_CODIGO = "10/minute"
-LIMITE_NOVA_SENHA = "5/minute"
-LIMITE_ALTERAR_SENHA = "5/minute"
-
-limiter = Limiter(key_func=get_remote_address)
-logger = logging.getLogger(__name__)
 
 app = FastAPI()
-app.state.limiter = limiter
 bearer = HTTPBearer()
-
-
-@app.exception_handler(RateLimitExceeded)
-async def limite_excedido(request: Request, exc: RateLimitExceeded):
-    return JSONResponse(
-        status_code=429,
-        content={"detail": "Muitas tentativas. Aguarde um instante e tente novamente."},
-        headers={"Retry-After": "60"},
-    )
-
 
 app.add_middleware(
     CORSMiddleware,
@@ -60,15 +33,8 @@ MAX_TENTATIVAS = 5
 RESPOSTA_PEDIR = {"mensagem": "Se o e-mail estiver cadastrado, enviaremos um código."}
 
 
-def limpar_codigos(db: Session):
-    db.query(models.CodigoVerificacao).filter(
-        models.CodigoVerificacao.expira_em < datetime.now(timezone.utc)
-    ).delete(synchronize_session=False)
-
-
 @app.post("/auth/google", response_model=schemas.Token)
-@limiter.limit(LIMITE_GOOGLE)
-def login_google(request: Request, dados: schemas.GoogleLogin, db: Session = Depends(get_db)):
+def login_google(dados: schemas.GoogleLogin, db: Session = Depends(get_db)):
     try:
         info = id_token.verify_oauth2_token(
             dados.credential,
@@ -77,7 +43,7 @@ def login_google(request: Request, dados: schemas.GoogleLogin, db: Session = Dep
             clock_skew_in_seconds=10,
         )
     except ValueError as e:
-        logger.warning("Credencial do Google rejeitada: %s", e)
+        print("ERRO GOOGLE:", e)
         raise HTTPException(status_code=401, detail="Credencial do Google inválida")
 
     if not info.get("email_verified"):
@@ -92,7 +58,7 @@ def login_google(request: Request, dados: schemas.GoogleLogin, db: Session = Dep
         user = models.User(
             nome=info.get("name") or email.split("@")[0],
             email=email,
-            sexo="Outro / Prefiro não informar",
+            sexo="Outro / Prefiro não informar",  # o Google não fornece, e a coluna é obrigatória
             provider="GOOGLE",
             provider_id=google_id,
             avatar_url=info.get("picture"),
@@ -110,8 +76,7 @@ def login_google(request: Request, dados: schemas.GoogleLogin, db: Session = Dep
 
 
 @app.post("/register", status_code=201)
-@limiter.limit(LIMITE_CADASTRO)
-def register(request: Request, dados: schemas.UserCreate, db: Session = Depends(get_db)):
+def register(dados: schemas.UserCreate, db: Session = Depends(get_db)):
     filtros = [models.User.email == dados.email]
     if dados.telefone:
         filtros.append(models.User.telefone == dados.telefone)
@@ -135,9 +100,7 @@ def register(request: Request, dados: schemas.UserCreate, db: Session = Depends(
 
 
 @app.post("/auth/recuperar/pedir")
-@limiter.limit(LIMITE_PEDIR_CODIGO)
 def pedir_codigo(
-    request: Request,
     dados: schemas.PedirCodigo,
     background: BackgroundTasks,
     db: Session = Depends(get_db),
@@ -147,7 +110,7 @@ def pedir_codigo(
         .filter(func.lower(models.User.email) == dados.email.lower())
         .first()
     )
-
+    # a resposta é sempre a mesma, para não revelar quais e-mails existem
     if not user:
         return RESPOSTA_PEDIR
 
@@ -158,11 +121,11 @@ def pedir_codigo(
         .order_by(CV.criado_em.desc())
         .first()
     )
-
+    # espera 60 segundos entre pedidos
     if ultimo and datetime.now(timezone.utc) - ultimo.criado_em < timedelta(seconds=60):
         return RESPOSTA_PEDIR
 
-
+    # invalida códigos anteriores ainda ativos
     db.query(CV).filter(
         CV.user_id == user.id,
         CV.finalidade == "RECUPERAR_SENHA",
@@ -175,7 +138,6 @@ def pedir_codigo(
         codigo_hash=security.hash_codigo(codigo),
         expira_em=datetime.now(timezone.utc) + timedelta(minutes=CODIGO_VALIDADE_MIN),
     ))
-    limpar_codigos(db)
     db.commit()
 
     background.add_task(enviar_codigo_verificacao, user.email, codigo)
@@ -183,8 +145,7 @@ def pedir_codigo(
 
 
 @app.post("/auth/recuperar/verificar")
-@limiter.limit(LIMITE_VERIFICAR_CODIGO)
-def verificar_codigo(request: Request, dados: schemas.VerificarCodigo, db: Session = Depends(get_db)):
+def verificar_codigo(dados: schemas.VerificarCodigo, db: Session = Depends(get_db)):
     invalido = HTTPException(status_code=400, detail="Código inválido ou expirado")
 
     user = (
@@ -223,8 +184,7 @@ def verificar_codigo(request: Request, dados: schemas.VerificarCodigo, db: Sessi
 
 
 @app.post("/auth/recuperar/nova-senha")
-@limiter.limit(LIMITE_NOVA_SENHA)
-def nova_senha(request: Request, dados: schemas.NovaSenha, db: Session = Depends(get_db)):
+def nova_senha(dados: schemas.NovaSenha, db: Session = Depends(get_db)):
     try:
         user_id = security.ler_reset_token(dados.reset_token)
     except jwt.PyJWTError:
@@ -240,8 +200,7 @@ def nova_senha(request: Request, dados: schemas.NovaSenha, db: Session = Depends
 
 
 @app.post("/login", response_model=schemas.Token)
-@limiter.limit(LIMITE_LOGIN)
-def login(request: Request, dados: schemas.LoginData, db: Session = Depends(get_db)):
+def login(dados: schemas.LoginData, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == dados.email).first()
     if not user or not user.senha_hash or not security.verificar_senha(dados.senha, user.senha_hash):
         raise HTTPException(status_code=401, detail="E-mail ou senha inválidos")
@@ -268,11 +227,8 @@ def usuario_atual(
 def me(user: models.User = Depends(usuario_atual)):
     return {"id": user.id, "nome": user.nome, "email": user.email}
 
-
 @app.post("/me/senha")
-@limiter.limit(LIMITE_ALTERAR_SENHA)
 def alterar_senha(
-    request: Request,
     dados: schemas.AlterarSenha,
     user: models.User = Depends(usuario_atual),
     db: Session = Depends(get_db),
