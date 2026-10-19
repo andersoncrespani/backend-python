@@ -171,11 +171,88 @@ CREATE INDEX idx_limites_criado_em  ON limites_requisicao (criado_em);
 
 </details>
 
-**Tabelas**
+## Tabelas
 
-- `users`: contas de usuário (login local ou Google).
-- `codigos_verificacao`: códigos de recuperação de senha (guardados apenas como hash).
-- `limites_requisicao`: registro de tentativas, usado para bloquear abusos.
+### `users`
+
+Contas de usuário, tanto de login local quanto do Google.
+
+| Coluna | Tipo | Obrigatória | Descrição |
+|---|---|---|---|
+| `id` | BIGSERIAL | sim | Chave primária |
+| `nome` | VARCHAR(120) | sim | Nome completo |
+| `email` | VARCHAR(180) | sim | Único, sempre em minúsculas |
+| `senha_hash` | VARCHAR(72) | não | Hash bcrypt (vazio em contas Google) |
+| `sexo` | VARCHAR(50) | sim | Sexo informado |
+| `data_nascimento` | DATE | não | Data de nascimento |
+| `telefone` | VARCHAR(30) | não | Único |
+| `provider` | VARCHAR(20) | sim | `LOCAL` ou `GOOGLE` |
+| `provider_id` | VARCHAR(255) | não | ID da conta no Google |
+| `avatar_url` | TEXT | não | Foto de perfil |
+| `token_version` | INTEGER | sim | Sobe a cada troca de senha e invalida os JWTs antigos |
+| `criado_em` | TIMESTAMPTZ | não | Data de criação |
+
+Exemplo de linhas:
+
+| id | nome | email | senha_hash | sexo | data_nascimento | telefone | provider | provider_id | avatar_url | token_version |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | Maria Silva | maria@exemplo.com | `$2b$12$k3...` | Feminino | 1990-05-20 | 51999999999 | LOCAL | null | null | 0 |
+| 2 | João Souza | joao@gmail.com | null | Masculino | null | null | GOOGLE | 1087654321... | https://lh3.googleusercontent.com/... | 0 |
+
+### `codigos_verificacao`
+
+Códigos de recuperação de senha. O código em si nunca é salvo, só o hash.
+
+| Coluna | Tipo | Obrigatória | Descrição |
+|---|---|---|---|
+| `id` | BIGSERIAL | sim | Chave primária |
+| `user_id` | BIGINT | sim | Dono do código (`users.id`, apaga junto com o usuário) |
+| `codigo_hash` | VARCHAR(64) | sim | HMAC do código de 6 dígitos |
+| `finalidade` | VARCHAR(30) | sim | Padrão: `RECUPERAR_SENHA` |
+| `tentativas` | SMALLINT | sim | Erros de digitação (máximo de 5) |
+| `usado` | BOOLEAN | sim | `true` depois de usado |
+| `expira_em` | TIMESTAMPTZ | sim | Validade de 10 minutos |
+| `criado_em` | TIMESTAMPTZ | não | Data de criação |
+
+Exemplo de linhas:
+
+| id | user_id | codigo_hash | finalidade | tentativas | usado | expira_em |
+|---|---|---|---|---|---|---|
+| 1 | 1 | `9f2c1a...` | RECUPERAR_SENHA | 0 | true | 2026-10-19 14:10:00-03 |
+| 2 | 1 | `b71e0d...` | RECUPERAR_SENHA | 2 | false | 2026-10-19 15:40:00-03 |
+
+### `limites_requisicao`
+
+Registro de tentativas, usado para bloquear abusos (veja [Segurança](#segurança)). Cada linha é uma tentativa.
+
+| Coluna | Tipo | Obrigatória | Descrição |
+|---|---|---|---|
+| `id` | BIGSERIAL | sim | Chave primária |
+| `acao` | VARCHAR(30) | sim | Tipo da tentativa (login, cadastro, recuperação...) |
+| `chave` | VARCHAR(200) | sim | E-mail, IP ou usuário que fez a tentativa |
+| `criado_em` | TIMESTAMPTZ | sim | Momento da tentativa |
+
+Exemplo de linhas:
+
+| id | acao | chave | criado_em |
+|---|---|---|---|
+| 1 | login | email:maria@exemplo.com | 2026-10-19 14:01:10-03 |
+| 2 | login | ip:203.0.113.7 | 2026-10-19 14:01:10-03 |
+
+### Consultas úteis
+
+```sql
+-- Ver os usuários cadastrados
+SELECT id, nome, email, provider, criado_em FROM users ORDER BY id;
+
+-- Ver códigos de recuperação ainda válidos
+SELECT user_id, tentativas, expira_em
+FROM codigos_verificacao
+WHERE usado = FALSE AND expira_em > now();
+
+-- Limpar tentativas antigas (mais de 1 dia)
+DELETE FROM limites_requisicao WHERE criado_em < now() - interval '1 day';
+```
 
 ## Endpoints
 
@@ -269,5 +346,3 @@ curl http://localhost:8000/me -H "Authorization: Bearer SEU_TOKEN"
 - Conecte ao banco com um usuário de poucas permissões (apenas `SELECT`, `INSERT`, `UPDATE` e `DELETE`), e não com o superusuário.
 - Nunca suba o `.env` para o Git. Se isso já aconteceu, troque `SECRET_KEY`, a senha do banco e a senha de app do Gmail.
 - Faça backups do banco (`pg_dump`) e mantenha as dependências atualizadas (`pip-audit`).
-
-
