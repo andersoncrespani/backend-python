@@ -271,9 +271,4 @@ curl http://localhost:8000/me -H "Authorization: Bearer SEU_TOKEN"
 - Nunca suba o `.env` para o Git. Se isso já aconteceu, troque `SECRET_KEY`, a senha do banco e a senha de app do Gmail.
 - Faça backups do banco (`pg_dump`) e mantenha as dependências atualizadas (`pip-audit`).
 
-## Próximos passos
 
-- [ ] Confirmação de e-mail no cadastro
-- [ ] Migrações com Alembic
-- [ ] Testes automatizados
-- [ ] Separar as rotas em routers (`auth`, `usuario`)
