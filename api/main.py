@@ -1,7 +1,8 @@
+import logging
 from datetime import datetime, timedelta, timezone
 
 import jwt
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from google.auth.transport import requests as google_requests
@@ -10,20 +11,18 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from . import models, schemas, security
-from .config import GOOGLE_CLIENT_ID
+from .config import CORS_ORIGINS, GOOGLE_CLIENT_ID
 from .database import get_db
 from .email import enviar_codigo_verificacao
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI()
 bearer = HTTPBearer()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-    ],
+    allow_origins=CORS_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -31,6 +30,38 @@ app.add_middleware(
 CODIGO_VALIDADE_MIN = 10
 MAX_TENTATIVAS = 5
 RESPOSTA_PEDIR = {"mensagem": "Se o e-mail estiver cadastrado, enviaremos um código."}
+
+
+JANELA_LOGIN_MIN = 15
+MAX_FALHAS_POR_EMAIL = 5
+MAX_FALHAS_POR_IP = 20
+
+
+def ip_do_cliente(request: Request) -> str:
+    return request.client.host if request.client else "desconhecido"
+
+
+def checar_bloqueio_login(db: Session, email: str, ip: str):
+    desde = datetime.now(timezone.utc) - timedelta(minutes=JANELA_LOGIN_MIN)
+    TL = models.TentativaLogin
+
+    falhas_email = (
+        db.query(func.count(TL.id))
+        .filter(TL.email == email, TL.criado_em >= desde)
+        .scalar()
+    )
+    falhas_ip = (
+        db.query(func.count(TL.id))
+        .filter(TL.ip == ip, TL.criado_em >= desde)
+        .scalar()
+    )
+
+    if falhas_email >= MAX_FALHAS_POR_EMAIL or falhas_ip >= MAX_FALHAS_POR_IP:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Muitas tentativas de login. Tente novamente em {JANELA_LOGIN_MIN} minutos.",
+            headers={"Retry-After": str(JANELA_LOGIN_MIN * 60)},
+        )
 
 
 @app.post("/auth/google", response_model=schemas.Token)
@@ -42,8 +73,9 @@ def login_google(dados: schemas.GoogleLogin, db: Session = Depends(get_db)):
             GOOGLE_CLIENT_ID,
             clock_skew_in_seconds=10,
         )
-    except ValueError as e:
-        print("ERRO GOOGLE:", e)
+    except ValueError:
+        # não loga a exceção: a mensagem pode carregar pedaços do token
+        logger.warning("Falha ao validar a credencial do Google")
         raise HTTPException(status_code=401, detail="Credencial do Google inválida")
 
     if not info.get("email_verified"):
@@ -58,7 +90,7 @@ def login_google(dados: schemas.GoogleLogin, db: Session = Depends(get_db)):
         user = models.User(
             nome=info.get("name") or email.split("@")[0],
             email=email,
-            sexo="Outro / Prefiro não informar", 
+            sexo="Outro / Prefiro não informar",  # o Google não fornece, e a coluna é obrigatória
             provider="GOOGLE",
             provider_id=google_id,
             avatar_url=info.get("picture"),
@@ -198,10 +230,27 @@ def nova_senha(dados: schemas.NovaSenha, db: Session = Depends(get_db)):
 
 
 @app.post("/login", response_model=schemas.Token)
-def login(dados: schemas.LoginData, db: Session = Depends(get_db)):
-    user = db.query(models.User).filter(models.User.email == dados.email).first()
+def login(dados: schemas.LoginData, request: Request, db: Session = Depends(get_db)):
+    email = dados.email.lower()
+    ip = ip_do_cliente(request)
+
+    
+    checar_bloqueio_login(db, email, ip)
+
+    user = db.query(models.User).filter(func.lower(models.User.email) == email).first()
     if not user or not user.senha_hash or not security.verificar_senha(dados.senha, user.senha_hash):
+        TL = models.TentativaLogin
+        db.add(TL(email=email, ip=ip))
+        
+        db.query(TL).filter(
+            TL.criado_em < datetime.now(timezone.utc) - timedelta(days=1)
+        ).delete()
+        db.commit()
         raise HTTPException(status_code=401, detail="E-mail ou senha inválidos")
+
+    
+    db.query(models.TentativaLogin).filter(models.TentativaLogin.email == email).delete()
+    db.commit()
 
     return {"access_token": security.criar_token(user.id, user.email)}
 
@@ -223,7 +272,12 @@ def usuario_atual(
 
 @app.get("/me")
 def me(user: models.User = Depends(usuario_atual)):
-    return {"id": user.id, "nome": user.nome, "email": user.email}
+    return {
+        "id": user.id,
+        "nome": user.nome,
+        "email": user.email,
+        "avatar_url": user.avatar_url,
+    }
 
 @app.post("/me/senha")
 def alterar_senha(
@@ -246,3 +300,4 @@ def alterar_senha(
     user.senha_hash = security.gerar_hash(dados.nova_senha)
     db.commit()
     return {"mensagem": "Senha alterada com sucesso"}
+

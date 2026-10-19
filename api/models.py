@@ -2,6 +2,7 @@ from sqlalchemy import (
     BigInteger, Boolean, Column, Date, DateTime, ForeignKey,
     SmallInteger, String, Text, func,
 )
+
 from .database import Base
 
 
@@ -32,3 +33,12 @@ class CodigoVerificacao(Base):
     usado = Column(Boolean, nullable=False, default=False)
     expira_em = Column(DateTime(timezone=True), nullable=False)
     criado_em = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class TentativaLogin(Base):
+    __tablename__ = "tentativas_login"
+
+    id = Column(BigInteger, primary_key=True)
+    email = Column(String(180), nullable=False)
+    ip = Column(String(45), nullable=False)
+    criado_em = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

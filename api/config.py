@@ -1,13 +1,16 @@
 import os
+
 from dotenv import load_dotenv
 
 load_dotenv()
+
 
 def _obrigatoria(nome: str) -> str:
     valor = os.getenv(nome)
     if not valor:
         raise RuntimeError(f"Variável de ambiente ausente: {nome}")
     return valor
+
 
 EMAIL_REMETENTE = _obrigatoria("EMAIL_REMETENTE")
 EMAIL_SENHA = _obrigatoria("EMAIL_SENHA")
@@ -21,4 +24,14 @@ DB_NAME = _obrigatoria("DB_NAME")
 SECRET_KEY = _obrigatoria("SECRET_KEY")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 EXPIRATION_MINUTES = int(os.getenv("JWT_EXPIRATION_MINUTES", "60"))
+
 GOOGLE_CLIENT_ID = _obrigatoria("GOOGLE_CLIENT_ID")
+
+CORS_ORIGINS = [
+    origem.strip()
+    for origem in os.getenv(
+        "CORS_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000",
+    ).split(",")
+    if origem.strip()
+]
