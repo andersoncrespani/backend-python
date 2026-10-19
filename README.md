@@ -242,7 +242,6 @@ curl http://localhost:8000/me -H "Authorization: Bearer SEU_TOKEN"
 - **Senhas** com hash bcrypt, entre 8 e 72 bytes (acentos e emojis contam mais de 1).
 - **Códigos de recuperação** guardados com HMAC, com validade de 10 minutos e no máximo 5 tentativas por código.
 - **Sessões invalidadas** quando a senha muda, e `reset_token` de uso único.
-- **Sem vazamento de dados:** a recuperação responde igual para e-mails existentes e inexistentes, e o login leva o mesmo tempo nos dois casos.
 - **Limite de tentativas** (resposta `429` com o cabeçalho `Retry-After`):
 
 | Ação | Limite |
