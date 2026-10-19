@@ -7,3 +7,4 @@ print("Código gerado:", codigo)
 
 ok = enviar_codigo_verificacao("seu_email@example.com", codigo)
 print("Enviado?", ok)
+
