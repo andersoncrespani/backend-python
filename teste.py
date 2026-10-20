@@ -1,10 +1,9 @@
-from api.email import enviar_codigo_verificacao
-from api.security import gerar_codigo
+from api.email import enviar_email
 
-
-codigo = gerar_codigo()
-print("Código gerado:", codigo)
-
-ok = enviar_codigo_verificacao("seu_email@example.com", codigo)
-print("Enviado?", ok)
-
+ok = enviar_email(
+    "andersonpessoal2007@gmail.com",
+    "Teste Brevo",
+    "<p>Funcionou!</p>",
+    "Funcionou!",
+)
+print("Resultado:", ok)

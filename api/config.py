@@ -15,8 +15,10 @@ def _obrigatoria(nome: str) -> str:
 AMBIENTE = os.getenv("AMBIENTE", "desenvolvimento").strip().lower()
 EM_PRODUCAO = AMBIENTE in ("producao", "produção", "production", "prod")
 
+
 EMAIL_REMETENTE = _obrigatoria("EMAIL_REMETENTE")
-EMAIL_SENHA = _obrigatoria("EMAIL_SENHA")
+NOME_REMETENTE = os.getenv("NOME_REMETENTE", "Informa-Saúde")
+BREVO_API_KEY = _obrigatoria("BREVO_API_KEY")
 
 DB_USER = _obrigatoria("DB_USER")
 DB_PASSWORD = _obrigatoria("DB_PASSWORD")
