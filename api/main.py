@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token
-from sqlalchemy import func, or_
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import limites, models, schemas, security
@@ -36,6 +36,9 @@ CODIGO_VALIDADE_MIN = 10
 MAX_TENTATIVAS = 5
 RESPOSTA_PEDIR = {"mensagem": "Se o e-mail estiver cadastrado, enviaremos um código."}
 
+FINALIDADE_RECUPERAR = "RECUPERAR_SENHA"
+FINALIDADE_VERIFICAR_EMAIL = "VERIFICAR_EMAIL"
+
 
 LOGIN_POR_EMAIL = (5, 15)          
 LOGIN_POR_IP = (20, 15)            
@@ -45,6 +48,27 @@ REGISTRO_POR_IP = (10, 60)
 CODIGO_POR_EMAIL = (10, 60)        
 CODIGO_POR_IP = (30, 60)
 SENHA_ATUAL_POR_USUARIO = (5, 15)  
+
+
+def _emitir_codigo(db: Session, user: models.User, finalidade: str, background: BackgroundTasks):
+    """Invalida os códigos anteriores da mesma finalidade, cria um novo e envia por e-mail."""
+    CV = models.CodigoVerificacao
+    db.query(CV).filter(
+        CV.user_id == user.id,
+        CV.finalidade == finalidade,
+        CV.usado == False,
+    ).update({"usado": True})
+
+    codigo = security.gerar_codigo()
+    db.add(CV(
+        user_id=user.id,
+        codigo_hash=security.hash_codigo(codigo),
+        finalidade=finalidade,
+        expira_em=datetime.now(timezone.utc) + timedelta(minutes=CODIGO_VALIDADE_MIN),
+    ))
+    db.commit()
+
+    background.add_task(enviar_codigo_verificacao, user.email, codigo)
 
 
 @app.post("/auth/google", response_model=schemas.Token)
@@ -76,6 +100,7 @@ def login_google(dados: schemas.GoogleLogin, db: Session = Depends(get_db)):
             provider="GOOGLE",
             provider_id=google_id,
             avatar_url=info.get("picture"),
+            email_verificado=True,
         )
         db.add(user)
     else:
@@ -86,6 +111,7 @@ def login_google(dados: schemas.GoogleLogin, db: Session = Depends(get_db)):
                 user.token_version += 1
         if not user.avatar_url:
             user.avatar_url = info.get("picture")
+        user.email_verificado = True
 
     db.commit()
     db.refresh(user)
@@ -93,31 +119,154 @@ def login_google(dados: schemas.GoogleLogin, db: Session = Depends(get_db)):
 
 
 @app.post("/register", status_code=201)
-def register(dados: schemas.UserCreate, request: Request, db: Session = Depends(get_db)):
+def register(
+    dados: schemas.UserCreate,
+    request: Request,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     chave_ip = limites.k_ip(limites.ip_do_cliente(request))
     limites.checar(db, "REGISTER", [(chave_ip, *REGISTRO_POR_IP)])
     limites.registrar(db, "REGISTER", chave_ip)
 
-    filtros = [func.lower(models.User.email) == dados.email]
-    if dados.telefone:
-        filtros.append(models.User.telefone == dados.telefone)
+    duplicado = HTTPException(status_code=400, detail="E-mail ou telefone já cadastrados")
 
-    if db.query(models.User).filter(or_(*filtros)).first():
-        raise HTTPException(status_code=400, detail="E-mail ou telefone já cadastrados")
-
-    user = models.User(
-        nome=dados.nome,
-        email=dados.email,
-        senha_hash=security.gerar_hash(dados.senha),
-        sexo=dados.sexo,
-        data_nascimento=dados.data_nascimento,
-        telefone=dados.telefone,
-        provider="LOCAL",
+    existente = (
+        db.query(models.User)
+        .filter(func.lower(models.User.email) == dados.email)
+        .first()
     )
-    db.add(user)
+    if existente and existente.email_verificado:
+        raise duplicado
+
+    if dados.telefone:
+        consulta_telefone = db.query(models.User).filter(models.User.telefone == dados.telefone)
+        if existente:
+            consulta_telefone = consulta_telefone.filter(models.User.id != existente.id)
+        if consulta_telefone.first():
+            raise duplicado
+
+    if existente:
+        user = existente
+        user.nome = dados.nome
+        user.senha_hash = security.gerar_hash(dados.senha)
+        user.sexo = dados.sexo
+        user.data_nascimento = dados.data_nascimento
+        user.telefone = dados.telefone
+        user.token_version += 1
+    else:
+        user = models.User(
+            nome=dados.nome,
+            email=dados.email,
+            senha_hash=security.gerar_hash(dados.senha),
+            sexo=dados.sexo,
+            data_nascimento=dados.data_nascimento,
+            telefone=dados.telefone,
+            provider="LOCAL",
+            email_verificado=False,
+        )
+        db.add(user)
+
     db.commit()
     db.refresh(user)
+
+    _emitir_codigo(db, user, FINALIDADE_VERIFICAR_EMAIL, background)
     return {"id": user.id, "nome": user.nome, "email": user.email}
+
+
+@app.post("/register/verificar")
+def verificar_email(
+    dados: schemas.VerificarCodigo,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    invalido = HTTPException(status_code=400, detail="Código inválido ou expirado")
+
+    email = dados.email.lower()
+    chave_email = limites.k_email(email)
+    chave_ip = limites.k_ip(limites.ip_do_cliente(request))
+
+    limites.checar(
+        db, "EMAIL_CODIGO", [(chave_email, *CODIGO_POR_EMAIL), (chave_ip, *CODIGO_POR_IP)]
+    )
+
+    def recusar():
+        limites.registrar(db, "EMAIL_CODIGO", chave_email, chave_ip)
+        return invalido
+
+    user = (
+        db.query(models.User)
+        .filter(func.lower(models.User.email) == email)
+        .first()
+    )
+    if not user or user.email_verificado:
+        raise recusar()
+
+    CV = models.CodigoVerificacao
+    registro = (
+        db.query(CV)
+        .filter(
+            CV.user_id == user.id,
+            CV.finalidade == FINALIDADE_VERIFICAR_EMAIL,
+            CV.usado == False,
+        )
+        .order_by(CV.criado_em.desc())
+        .first()
+    )
+    if not registro or registro.expira_em < datetime.now(timezone.utc):
+        raise recusar()
+
+    if registro.tentativas >= MAX_TENTATIVAS:
+        raise HTTPException(status_code=429, detail="Muitas tentativas. Peça um novo código.")
+
+    if not security.codigo_confere(dados.codigo, registro.codigo_hash):
+        registro.tentativas += 1
+        db.commit()
+        raise recusar()
+
+    registro.usado = True
+    user.email_verificado = True
+    db.commit()
+    limites.limpar(db, "EMAIL_CODIGO", chave_email)
+    return {"mensagem": "E-mail verificado com sucesso"}
+
+
+@app.post("/register/reenviar")
+def reenviar_codigo_cadastro(
+    dados: schemas.PedirCodigo,
+    request: Request,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    email = dados.email.lower()
+    chave_email = limites.k_email(email)
+    chave_ip = limites.k_ip(limites.ip_do_cliente(request))
+
+    limites.checar(
+        db, "EMAIL_PEDIR", [(chave_email, *PEDIR_POR_EMAIL), (chave_ip, *PEDIR_POR_IP)]
+    )
+    limites.registrar(db, "EMAIL_PEDIR", chave_email, chave_ip)
+
+    user = (
+        db.query(models.User)
+        .filter(func.lower(models.User.email) == email)
+        .first()
+    )
+    if not user or user.email_verificado:
+        return RESPOSTA_PEDIR
+
+    CV = models.CodigoVerificacao
+    ultimo = (
+        db.query(CV)
+        .filter(CV.user_id == user.id, CV.finalidade == FINALIDADE_VERIFICAR_EMAIL)
+        .order_by(CV.criado_em.desc())
+        .first()
+    )
+    if ultimo and datetime.now(timezone.utc) - ultimo.criado_em < timedelta(seconds=60):
+        return RESPOSTA_PEDIR
+
+    _emitir_codigo(db, user, FINALIDADE_VERIFICAR_EMAIL, background)
+    return RESPOSTA_PEDIR
 
 
 @app.post("/auth/recuperar/pedir")
@@ -147,7 +296,7 @@ def pedir_codigo(
     CV = models.CodigoVerificacao
     ultimo = (
         db.query(CV)
-        .filter(CV.user_id == user.id, CV.finalidade == "RECUPERAR_SENHA")
+        .filter(CV.user_id == user.id, CV.finalidade == FINALIDADE_RECUPERAR)
         .order_by(CV.criado_em.desc())
         .first()
     )
@@ -155,22 +304,7 @@ def pedir_codigo(
     if ultimo and datetime.now(timezone.utc) - ultimo.criado_em < timedelta(seconds=60):
         return RESPOSTA_PEDIR
 
-   
-    db.query(CV).filter(
-        CV.user_id == user.id,
-        CV.finalidade == "RECUPERAR_SENHA",
-        CV.usado == False,
-    ).update({"usado": True})
-
-    codigo = security.gerar_codigo()
-    db.add(CV(
-        user_id=user.id,
-        codigo_hash=security.hash_codigo(codigo),
-        expira_em=datetime.now(timezone.utc) + timedelta(minutes=CODIGO_VALIDADE_MIN),
-    ))
-    db.commit()
-
-    background.add_task(enviar_codigo_verificacao, user.email, codigo)
+    _emitir_codigo(db, user, FINALIDADE_RECUPERAR, background)
     return RESPOSTA_PEDIR
 
 
@@ -206,7 +340,7 @@ def verificar_codigo(
         db.query(CV)
         .filter(
             CV.user_id == user.id,
-            CV.finalidade == "RECUPERAR_SENHA",
+            CV.finalidade == FINALIDADE_RECUPERAR,
             CV.usado == False,
         )
         .order_by(CV.criado_em.desc())
@@ -247,6 +381,7 @@ def nova_senha(dados: schemas.NovaSenha, db: Session = Depends(get_db)):
 
     user.senha_hash = security.gerar_hash(dados.nova_senha)
     user.token_version += 1  
+    user.email_verificado = True  
 
     CV = models.CodigoVerificacao
     db.query(CV).filter(CV.user_id == user.id, CV.usado == False).update({"usado": True})
@@ -274,6 +409,12 @@ def login(dados: schemas.LoginData, request: Request, db: Session = Depends(get_
     if not senha_ok:
         limites.registrar(db, "LOGIN", chave_email, chave_ip)
         raise HTTPException(status_code=401, detail="E-mail ou senha inválidos")
+
+    if not user.email_verificado:
+        raise HTTPException(
+            status_code=403,
+            detail="Confirme seu e-mail antes de entrar. Refaça o cadastro para receber um novo código.",
+        )
 
     limites.limpar(db, "LOGIN", chave_email)
     return {"access_token": security.criar_token(user.id, user.email, user.token_version)}
