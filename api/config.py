@@ -15,7 +15,20 @@ def _obrigatoria(nome: str) -> str:
 AMBIENTE = os.getenv("AMBIENTE", "desenvolvimento").strip().lower()
 EM_PRODUCAO = AMBIENTE in ("producao", "produção", "production", "prod")
 
-PROXIES_CONFIAVEIS = int(os.getenv("PROXIES_CONFIAVEIS", "0"))
+_proxies_env = os.getenv("PROXIES_CONFIAVEIS", "").strip()
+if EM_PRODUCAO and not _proxies_env:
+    raise RuntimeError(
+        "Defina PROXIES_CONFIAVEIS em produção: 0 se a API recebe tráfego direto, "
+        "1 se há um proxy na frente (Render, Railway, Nginx...), 2 se há dois (ex.: Cloudflare + hospedagem). "
+        "Se ficar errado, o limite por IP trata todos os usuários como um só."
+    )
+try:
+    PROXIES_CONFIAVEIS = int(_proxies_env or "0")
+except ValueError:
+    raise RuntimeError("PROXIES_CONFIAVEIS precisa ser um número inteiro (0, 1, 2...)")
+if PROXIES_CONFIAVEIS < 0:
+    raise RuntimeError("PROXIES_CONFIAVEIS não pode ser negativo")
+
 
 EMAIL_REMETENTE = _obrigatoria("EMAIL_REMETENTE")
 NOME_REMETENTE = os.getenv("NOME_REMETENTE", "Informa-Saúde")
