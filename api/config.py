@@ -15,6 +15,7 @@ def _obrigatoria(nome: str) -> str:
 AMBIENTE = os.getenv("AMBIENTE", "desenvolvimento").strip().lower()
 EM_PRODUCAO = AMBIENTE in ("producao", "produção", "production", "prod")
 
+PROXIES_CONFIAVEIS = int(os.getenv("PROXIES_CONFIAVEIS", "0"))
 
 EMAIL_REMETENTE = _obrigatoria("EMAIL_REMETENTE")
 NOME_REMETENTE = os.getenv("NOME_REMETENTE", "Informa-Saúde")

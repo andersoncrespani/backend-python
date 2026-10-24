@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-
+from .config import PROXIES_CONFIAVEIS
 from fastapi import HTTPException, Request
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -10,6 +10,18 @@ GUARDA_DIAS = 1
 
 
 def ip_do_cliente(request: Request) -> str:
+    """IP real do cliente.
+
+    Sem proxy (PROXIES_CONFIAVEIS=0), usa o IP da conexão. Atrás de proxy, lê o
+    X-Forwarded-For contando a partir do FIM da lista: cada proxy confiável
+    acrescenta o IP de quem conectou nele, então o IP do cliente é o N-ésimo
+    de trás para frente. Os IPs à esquerda podem ter sido forjados pelo cliente.
+    """
+    if PROXIES_CONFIAVEIS > 0:
+        encaminhado = request.headers.get("x-forwarded-for", "")
+        ips = [ip.strip() for ip in encaminhado.split(",") if ip.strip()]
+        if len(ips) >= PROXIES_CONFIAVEIS:
+            return ips[-PROXIES_CONFIAVEIS]
     return request.client.host if request.client else "desconhecido"
 
 
