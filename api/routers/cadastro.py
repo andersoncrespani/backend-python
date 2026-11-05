@@ -42,6 +42,20 @@ def register(
     if existente and existente.email_verificado:
         raise duplicado
 
+    if existente:
+        CV = models.CodigoVerificacao
+        ultimo = (
+            db.query(CV)
+            .filter(CV.user_id == existente.id, CV.finalidade == FINALIDADE_VERIFICAR_EMAIL)
+            .order_by(CV.criado_em.desc())
+            .first()
+        )
+        if ultimo and datetime.now(timezone.utc) - ultimo.criado_em < timedelta(seconds=60):
+            raise HTTPException(
+                status_code=429,
+                detail="Aguarde 1 minuto antes de pedir um novo código",
+            )
+
     if dados.telefone:
         consulta_telefone = db.query(models.User).filter(models.User.telefone == dados.telefone)
         if existente:
