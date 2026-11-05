@@ -12,6 +12,7 @@ from .. import limites, models, schemas, security
 from ..codigos import emitir_codigo
 from ..config import GOOGLE_CLIENT_ID
 from ..database import get_db
+from ..email import enviar_aviso_senha_alterada
 from ..regras import (
     CODIGO_POR_EMAIL,
     CODIGO_POR_IP,
@@ -62,6 +63,12 @@ def login_google(dados: schemas.GoogleLogin, db: Session = Depends(get_db)):
         )
         db.add(user)
     else:
+        if user.provider_id and user.provider_id != google_id:
+            logger.warning("Login Google recusado: provider_id diferente para user %s", user.id)
+            raise HTTPException(
+                status_code=401,
+                detail="Esta conta está vinculada a outra conta do Google",
+            )
         if not user.provider_id:
             user.provider_id = google_id
             if user.senha_hash:
@@ -199,7 +206,11 @@ def verificar_codigo(
 
 
 @router.post("/auth/recuperar/nova-senha")
-def nova_senha(dados: schemas.NovaSenha, db: Session = Depends(get_db)):
+def nova_senha(
+    dados: schemas.NovaSenha,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     sessao_invalida = HTTPException(
         status_code=400, detail="Sessão de recuperação inválida ou expirada"
     )
@@ -222,4 +233,5 @@ def nova_senha(dados: schemas.NovaSenha, db: Session = Depends(get_db)):
     db.query(CV).filter(CV.user_id == user.id, CV.usado == False).update({"usado": True})
 
     db.commit()
+    background.add_task(enviar_aviso_senha_alterada, user.email)
     return {"mensagem": "Senha alterada com sucesso"}
