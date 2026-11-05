@@ -25,7 +25,6 @@ body { font-family: Arial, sans-serif; background-color: #f4f7f6; margin: 0; pad
 
 
 def _montar_html(conteudo: str) -> str:
-    """Layout padrão dos e-mails: cabeçalho com logo, conteúdo e rodapé."""
     return f"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -51,7 +50,6 @@ def enviar_email(
     texto: str | None = None,
     nome_destinatario: str | None = None,
 ) -> bool:
-    """Envia um e-mail transacional pela API do Brevo. Retorna True se aceito."""
     para = {"email": destinatario}
     if nome_destinatario:
         para["name"] = nome_destinatario
@@ -72,7 +70,6 @@ def enviar_email(
             headers={"api-key": BREVO_API_KEY, "accept": "application/json"},
             timeout=10,
         )
-        print(f"BREVO -> {destinatario}: {resposta.status_code} {resposta.text}")
         resposta.raise_for_status()
         return True
     except httpx.HTTPStatusError as e:
@@ -98,6 +95,26 @@ def enviar_codigo_verificacao(destinatario: str, codigo: str) -> bool:
     return enviar_email(
         destinatario,
         "Seu código de verificação - informa-Saúde",
+        _montar_html(conteudo),
+        texto_plano,
+    )
+
+
+def enviar_aviso_senha_alterada(destinatario: str) -> bool:
+    texto_plano = (
+        "Olá!\n\nA senha da sua conta na informa-Saúde acabou de ser alterada.\n\n"
+        "Se foi você, não precisa fazer nada. Se não foi, use a opção "
+        "'Esqueci minha senha' para criar uma nova senha imediatamente."
+    )
+    conteudo = """
+<p>Olá,</p>
+<p>A senha da sua conta na <strong>informa-Saúde</strong> acabou de ser alterada, e todas as sessões abertas foram encerradas.</p>
+<p>Se foi você, não precisa fazer nada.</p>
+<p><strong>Se não foi você</strong>, use a opção "Esqueci minha senha" na tela de login para criar uma nova senha agora mesmo.</p>
+"""
+    return enviar_email(
+        destinatario,
+        "Sua senha foi alterada - informa-Saúde",
         _montar_html(conteudo),
         texto_plano,
     )
