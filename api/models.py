@@ -1,5 +1,5 @@
 from sqlalchemy import (
-    BigInteger, Boolean, Column, Date, DateTime, ForeignKey,
+    BigInteger, Boolean, Column, Date, DateTime, ForeignKey, Index,
     Integer, SmallInteger, String, Text, func,
 )
 
@@ -38,11 +38,13 @@ class CodigoVerificacao(Base):
 
 
 class LimiteRequisicao(Base):
-    """Registro de tentativas, usado para limitar login, cadastro, códigos etc."""
-
     __tablename__ = "limites_requisicao"
+    __table_args__ = (
+        Index("ix_limites_acao_chave_criado_em", "acao", "chave", "criado_em"),
+        Index("ix_limites_criado_em", "criado_em"),
+    )
 
     id = Column(BigInteger, primary_key=True)
-    acao = Column(String(30), nullable=False)    
-    chave = Column(String(200), nullable=False)  
+    acao = Column(String(30), nullable=False)
+    chave = Column(String(200), nullable=False)
     criado_em = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
