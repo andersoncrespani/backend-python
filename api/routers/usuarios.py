@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from .. import limites, models, schemas, security
 from ..database import get_db
 from ..dependencias import usuario_atual
+from ..email import enviar_aviso_senha_alterada
 from ..regras import SENHA_ATUAL_POR_USUARIO
 
 router = APIRouter(tags=["Usuário"])
@@ -22,6 +23,7 @@ def me(user: models.User = Depends(usuario_atual)):
 @router.post("/me/senha")
 def alterar_senha(
     dados: schemas.AlterarSenha,
+    background: BackgroundTasks,
     user: models.User = Depends(usuario_atual),
     db: Session = Depends(get_db),
 ):
@@ -45,6 +47,8 @@ def alterar_senha(
     user.token_version += 1
     db.commit()
     limites.limpar(db, "SENHA_ATUAL", chave)
+
+    background.add_task(enviar_aviso_senha_alterada, user.email)
 
     return {
         "mensagem": "Senha alterada com sucesso",
